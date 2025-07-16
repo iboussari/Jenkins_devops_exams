@@ -17,47 +17,56 @@ pipeline {
       }
     }
 
-    stage('Docker Login & Push Images') {
+    stage('Docker Login & Build/Push') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+        withCredentials([usernamePassword(
+          credentialsId: 'dockerhub-creds',
+          usernameVariable: 'DOCKER_USER',
+          passwordVariable: 'DOCKER_PASS'
+        )]) {
           sh """
             echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
 
-            docker build -t \$DOCKER_USER/cast-service:\$IMAGE_TAG cast-service/
-            docker push \$DOCKER_USER/cast-service:\$IMAGE_TAG
+            docker build -t \$DOCKER_USER/cast-service:${IMAGE_TAG} cast-service/
+            docker push \$DOCKER_USER/cast-service:${IMAGE_TAG}
 
-            docker build -t \$DOCKER_USER/movie-service:\$IMAGE_TAG movie-service/
-            docker push \$DOCKER_USER/movie-service:\$IMAGE_TAG
+            docker build -t \$DOCKER_USER/movie-service:${IMAGE_TAG} movie-service/
+            docker push \$DOCKER_USER/movie-service:${IMAGE_TAG}
           """
         }
       }
     }
 
-    stage('Deploy to DEV') {
+    stage('Deploy to Environment') {
       steps {
-        sh """
-          helm upgrade --install cast-service-dev ./charts/cast-service \
-            --namespace dev --set image.tag=$IMAGE_TAG
+        script {
+          def namespaceMap = [
+            'dev'     : 'dev',
+            'qa'      : 'qa',
+            'staging' : 'staging',
+            'master'  : 'prod'
+          ]
 
-          helm upgrade --install movie-service-dev ./charts/movie-service \
-            --namespace dev --set image.tag=$IMAGE_TAG
-        """
-      }
-    }
+          def envNamespace = namespaceMap.get(env.BRANCH_NAME)
 
-    stage('Validation pour PROD') {
-      when {
-        branch 'master'
-      }
-      steps {
-        input message: 'Déployer en production ?'
-        sh """
-          helm upgrade --install cast-service-prod ./charts/cast-service \
-            --namespace prod --set image.tag=$IMAGE_TAG
+          if (envNamespace == null) {
+            error "Branche '${env.BRANCH_NAME}' non prise en charge pour le déploiement."
+          }
 
-          helm upgrade --install movie-service-prod ./charts/movie-service \
-            --namespace prod --set image.tag=$IMAGE_TAG
-        """
+          if (envNamespace == 'prod') {
+            input message: "Déploiement en production (#${BUILD_ID}) autorisé ?"
+          }
+
+          echo "Déploiement vers namespace '${envNamespace}' avec le tag '${IMAGE_TAG}'"
+
+          sh """
+            helm upgrade --install cast-service-${envNamespace} ./charts/cast-service \
+              --namespace ${envNamespace} --set image.tag=${IMAGE_TAG}
+
+            helm upgrade --install movie-service-${envNamespace} ./charts/movie-service \
+              --namespace ${envNamespace} --set image.tag=${IMAGE_TAG}
+          """
+        }
       }
     }
 
