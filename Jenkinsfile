@@ -17,27 +17,21 @@ pipeline {
       }
     }
 
-    stage('Build & Push cast-service') {
+    stage('Docker Login & Push Images') {
       steps {
-        dir('cast-service') {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
           sh """
-            docker build -t $DOCKERHUB_REPO/cast-service:$IMAGE_TAG .
-            docker push $DOCKERHUB_REPO/cast-service:$IMAGE_TAG
+            echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+
+            docker build -t \$DOCKER_USER/cast-service:\$IMAGE_TAG cast-service/
+            docker push \$DOCKER_USER/cast-service:\$IMAGE_TAG
+
+            docker build -t \$DOCKER_USER/movie-service:\$IMAGE_TAG movie-service/
+            docker push \$DOCKER_USER/movie-service:\$IMAGE_TAG
           """
         }
       }
     }
-
-    stage('Build & Push movie-service') {
-      steps {
-        dir('movie-service') {
-          sh """
-            docker build -t $DOCKERHUB_REPO/movie-service:$IMAGE_TAG .
-            docker push $DOCKERHUB_REPO/movie-service:$IMAGE_TAG
-          """
-        }
-       }
-      }
 
     stage('Deploy to DEV') {
       when {
@@ -45,14 +39,27 @@ pipeline {
       }
       steps {
         sh """
-          kubectl config use-context ton-context
-          helm upgrade --install cast-service-dev ./helm-chart \
-            --namespace dev \
-            --set image.tag=$IMAGE_TAG
-            
-          helm upgrade --install movie-service-dev ./helm-chart \
-            --namespace dev \
-            --set image.tag=$IMAGE_TAG
+          helm upgrade --install cast-service-dev ./charts/cast-service \
+            --namespace dev --set image.tag=$IMAGE_TAG
+
+          helm upgrade --install movie-service-dev ./charts/movie-service \
+            --namespace dev --set image.tag=$IMAGE_TAG
+        """
+      }
+    }
+
+    stage('Validation pour PROD') {
+      when {
+        branch 'master'
+      }
+      steps {
+        input message: 'Déployer en production ?'
+        sh """
+          helm upgrade --install cast-service-prod ./charts/cast-service \
+            --namespace prod --set image.tag=$IMAGE_TAG
+
+          helm upgrade --install movie-service-prod ./charts/movie-service \
+            --namespace prod --set image.tag=$IMAGE_TAG
         """
       }
     }
