@@ -16,51 +16,80 @@ pipeline {
         git branch: 'qa', url: 'https://github.com/iboussari/jenkins_devops_exams.git'
       }
     }
- 
-  stage('Docker Login & Push Images') {
+
+    stage('Préparation') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+        script {
+          // Détection de la branche si BRANCH_NAME est vide
+          def branch = env.BRANCH_NAME ?: sh(
+            script: 'git rev-parse --abbrev-ref HEAD', 
+            returnStdout: true
+          ).trim()
+
+          env.BRANCH_NAME = branch
+          env.IMAGE_TAG = "${env.BUILD_ID}-${env.BRANCH_NAME}"
+
+          echo "Branche détectée : ${env.BRANCH_NAME}"
+          echo "Tag d'image : ${env.IMAGE_TAG}"
+        }
+      }
+    }
+
+    stage('Docker Login & Build/Push') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'dockerhub-creds',
+          usernameVariable: 'DOCKER_USER',
+          passwordVariable: 'DOCKER_PASS'
+        )]) {
           sh """
             echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
 
-            docker build -t \$DOCKER_USER/cast-service:\$IMAGE_TAG cast-service/
-            docker push \$DOCKER_USER/cast-service:\$IMAGE_TAG
+            docker build -t \$DOCKER_USER/cast-service:${env.IMAGE_TAG} cast-service/
+            docker push \$DOCKER_USER/cast-service:${env.IMAGE_TAG}
 
-            docker build -t \$DOCKER_USER/movie-service:\$IMAGE_TAG movie-service/
-            docker push \$DOCKER_USER/movie-service:\$IMAGE_TAG
+            docker build -t \$DOCKER_USER/movie-service:${env.IMAGE_TAG} movie-service/
+            docker push \$DOCKER_USER/movie-service:${env.IMAGE_TAG}
           """
         }
       }
     }
 
-    stage('Deploy to QA') {
+    stage('Déploiement selon l’environnement') {
       steps {
-        sh """
-          helm upgrade --install cast-service-dev ./charts/cast-service \
-            --namespace dev --set image.tag=$IMAGE_TAG
+      withCredentials([file(credentialsId: 'kubeconfig-k3s', variable: 'KUBECONFIG')]) {
+        script {
+          def namespaceMap = [
+            'dev'     : 'dev',
+            'qa'      : 'qa',
+            'staging' : 'staging',
+            'master'  : 'prod'
+          ]
 
-          helm upgrade --install movie-service-dev ./charts/movie-service \
-            --namespace dev --set image.tag=$IMAGE_TAG
-        """
+          def ns = namespaceMap.get(env.BRANCH_NAME)
+
+          if (ns == null) {
+            error "Branche '${env.BRANCH_NAME}' non reconnue. Aucun déploiement effectué."
+          }
+
+          if (ns == 'prod') {
+            echo "Déploiement en production désactivé automatiquement."
+            echo "Image '${env.IMAGE_TAG}' est prête et poussée sur Docker Hub."
+          } else {
+            echo "Déploiement vers namespace '${ns}' avec image '${env.IMAGE_TAG}'"
+            sh """
+              helm upgrade --install cast-service-${ns} ./charts/cast-service \
+                --namespace ${ns} --set image.tag=${env.IMAGE_TAG}
+
+              helm upgrade --install movie-service-${ns} ./charts/movie-service \
+                --namespace ${ns} --set image.tag=${env.IMAGE_TAG}
+            """
+          }
+        }
+       }
       }
     }
-
-    stage('Validation pour PROD') {
-      when {
-        branch 'master'
-      }
-      steps {
-        input message: 'Déployer en production ?'
-        sh """
-          helm upgrade --install cast-service-prod ./charts/cast-service \
-            --namespace prod --set image.tag=$IMAGE_TAG
-
-          helm upgrade --install movie-service-prod ./charts/movie-service \
-            --namespace prod --set image.tag=$IMAGE_TAG
-        """
-      }
-    }   
-    
+  
   }
 
   post {
@@ -71,4 +100,5 @@ pipeline {
       echo "Échec du pipeline"
     }
   }
-}
+ }
+
