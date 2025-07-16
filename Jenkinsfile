@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   environment {
-    DOCKERHUB_REPO = 'iboussari/ismael-boussari-datascientest-jenkins_devops_exams'
+    DOCKERHUB_REPO = 'iboussari'
     IMAGE_TAG = "${env.BUILD_NUMBER}"
   }
 
