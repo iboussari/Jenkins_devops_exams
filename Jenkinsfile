@@ -13,7 +13,7 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        git branch: "${env.BRANCH_NAME}", url: 'https://github.com/iboussari/jenkins_devops_exams.git'
+        git branch: 'master', url: 'https://github.com/iboussari/jenkins_devops_exams.git'
       }
     }
 
