@@ -17,14 +17,27 @@ pipeline {
       }
     }
 
-    stage('Build & Push Docker Image') {
+    stage('Build & Push cast-service') {
       steps {
-        sh """
-          docker build -t $DOCKERHUB_REPO:$IMAGE_TAG .
-          docker push $DOCKERHUB_REPO:$IMAGE_TAG
-        """
+        dir('cast-service') {
+          sh """
+            docker build -t $DOCKERHUB_REPO/cast-service:$IMAGE_TAG .
+            docker push $DOCKERHUB_REPO/cast-service:$IMAGE_TAG
+          """
+        }
       }
     }
+
+    stage('Build & Push movie-service') {
+      steps {
+        dir('movie-service') {
+          sh """
+            docker build -t $DOCKERHUB_REPO/movie-service:$IMAGE_TAG .
+            docker push $DOCKERHUB_REPO/movie-service:$IMAGE_TAG
+          """
+        }
+       }
+      }
 
     stage('Deploy to DEV') {
       when {
@@ -33,52 +46,17 @@ pipeline {
       steps {
         sh """
           kubectl config use-context ton-context
-          helm upgrade --install jenkins_devops_exams-dev ./helm-chart \
+          helm upgrade --install cast-service-dev ./helm-chart \
+            --namespace dev \
+            --set image.tag=$IMAGE_TAG
+            
+          helm upgrade --install movie-service-dev ./helm-chart \
             --namespace dev \
             --set image.tag=$IMAGE_TAG
         """
       }
     }
 
-    stage('Deploy to QA') {
-      when {
-        branch 'qa'
-      }
-      steps {
-        sh """
-          helm upgrade --install jenkins_devops_exams-qa ./helm-chart \
-            --namespace qa \
-            --set image.tag=$IMAGE_TAG
-        """
-      }
-    }
-
-    stage('Deploy to Staging') {
-      when {
-        branch 'staging'
-      }
-      steps {
-        sh """
-          helm upgrade --install jenkins_devops_exams-staging ./helm-chart \
-            --namespace staging \
-            --set image.tag=$IMAGE_TAG
-        """
-      }
-    }
-
-    stage('Validation pour Production') {
-      when {
-        branch 'master'
-      }
-      steps {
-        input message: 'Confirmez le déploiement en production ?'
-        sh """
-          helm upgrade --install jenkins_devops_exams-prod ./helm-chart \
-            --namespace prod \
-            --set image.tag=$IMAGE_TAG
-        """
-      }
-    }
   }
 
   post {
@@ -89,4 +67,5 @@ pipeline {
       echo "Échec du pipeline"
     }
   }
-}
+ }
+
