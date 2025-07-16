@@ -34,9 +34,6 @@ pipeline {
     }
 
     stage('Deploy to QA') {
-      when {
-        branch 'qa'
-      }
       steps {
         sh """
           helm upgrade --install cast-service-dev ./charts/cast-service \
