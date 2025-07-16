@@ -17,6 +17,24 @@ pipeline {
       }
     }
 
+    stage('Préparation') {
+      steps {
+        script {
+          // Détection de la branche si BRANCH_NAME est vide
+          def branch = env.BRANCH_NAME ?: sh(
+            script: 'git rev-parse --abbrev-ref HEAD', 
+            returnStdout: true
+          ).trim()
+
+          env.BRANCH_NAME = branch
+          env.IMAGE_TAG = "${env.BUILD_ID}-${env.BRANCH_NAME}"
+
+          echo "Branche détectée : ${env.BRANCH_NAME}"
+          echo "Tag d'image : ${env.IMAGE_TAG}"
+        }
+      }
+    }
+
     stage('Docker Login & Build/Push') {
       steps {
         withCredentials([usernamePassword(
@@ -27,17 +45,17 @@ pipeline {
           sh """
             echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
 
-            docker build -t \$DOCKER_USER/cast-service:${IMAGE_TAG} cast-service/
-            docker push \$DOCKER_USER/cast-service:${IMAGE_TAG}
+            docker build -t \$DOCKER_USER/cast-service:${env.IMAGE_TAG} cast-service/
+            docker push \$DOCKER_USER/cast-service:${env.IMAGE_TAG}
 
-            docker build -t \$DOCKER_USER/movie-service:${IMAGE_TAG} movie-service/
-            docker push \$DOCKER_USER/movie-service:${IMAGE_TAG}
+            docker build -t \$DOCKER_USER/movie-service:${env.IMAGE_TAG} movie-service/
+            docker push \$DOCKER_USER/movie-service:${env.IMAGE_TAG}
           """
         }
       }
     }
 
-    stage('Deploy to Environment') {
+    stage('Déploiement selon l’environnement') {
       steps {
         script {
           def namespaceMap = [
@@ -47,29 +65,29 @@ pipeline {
             'master'  : 'prod'
           ]
 
-          def envNamespace = namespaceMap.get(env.BRANCH_NAME)
+          def ns = namespaceMap.get(env.BRANCH_NAME)
 
-          if (envNamespace == null) {
-            error "Branche '${env.BRANCH_NAME}' non prise en charge pour le déploiement."
+          if (ns == null) {
+            error "Branche '${env.BRANCH_NAME}' non reconnue. Aucun déploiement effectué."
           }
 
-          if (envNamespace == 'prod') {
-            input message: "Déploiement en production (#${BUILD_ID}) autorisé ?"
+          if (ns == 'prod') {
+            echo "Déploiement en production désactivé automatiquement."
+            echo "Image '${env.IMAGE_TAG}' est prête et poussée sur Docker Hub."
+          } else {
+            echo "Déploiement vers namespace '${ns}' avec image '${env.IMAGE_TAG}'"
+            sh """
+              helm upgrade --install cast-service-${ns} ./charts/cast-service \
+                --namespace ${ns} --set image.tag=${env.IMAGE_TAG}
+
+              helm upgrade --install movie-service-${ns} ./charts/movie-service \
+                --namespace ${ns} --set image.tag=${env.IMAGE_TAG}
+            """
           }
-
-          echo "Déploiement vers namespace '${envNamespace}' avec le tag '${IMAGE_TAG}'"
-
-          sh """
-            helm upgrade --install cast-service-${envNamespace} ./charts/cast-service \
-              --namespace ${envNamespace} --set image.tag=${IMAGE_TAG}
-
-            helm upgrade --install movie-service-${envNamespace} ./charts/movie-service \
-              --namespace ${envNamespace} --set image.tag=${IMAGE_TAG}
-          """
         }
       }
     }
-
+  
   }
 
   post {
